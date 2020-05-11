@@ -1,0 +1,158 @@
+### load _fp.def for noscan/feflat
+### load flat.def.gz or hfp.def.gz for flat run 
+
+my $proj = ${PART};
+my $rev = $ENV{USE_LAYOUT_REV}
+my $ipo_dir = "/home/t234_layout/tot/layout/${rev}/blocks";
+my %all_mods = map {$_ => 1} (get_modules(*));
+my @macros = grep (exists ($all_mods{$_}), (all_macros));
+my @parts = grep (exists ($all_mods{$_}), (all_partitions));
+my @chiplets = grep (exists ($all_mods{$_}), (all_chiplets));
+my $common_dir = "${ipo_dir}/${proj}_top/control";
+load ${common_dir}/hcoff.data
+tcm_set_var "TOOL(NAME)" dummy;
+
+# skip the legalization for loading region files.
+# no need for the accuracy and saving runtime
+set_eco_legal_placement never ;
+
+# report
+print "# top : $top\n";
+print "# chiplets: \n";
+foreach my $mod (@chiplets) {
+   print "#   |-> $mod\n";
+}
+print "# partitions:\n";
+foreach my $mod (@parts) {
+   print "#   |-> $mod\n";
+}
+print "# macros:\n";
+foreach my $mod (@macros) {
+   print "#   |-> $mod\n";
+}
+my $block=get_root_parent();
+my $gv_file = $M_file_gv{$block};
+my ($view) = $gv_file =~ /.*\/$block\.(.*)\.gv/;
+# view = (noscan|mbist|feflat|flat|layout/ipo/anno|pretp)
+if ($view =~ /noscan/ && $view !~ /pnr/) { #noscan.flat, noscan.par
+    $view = "noscan";
+} elsif ($view =~ /ipo\d+$/) {
+    $view = "anno";
+} elsif ($view =~ /FE_flat$/) {
+    $view = "feflat";
+} elsif ($view =~ /flat$/) {
+    $view = "flat";
+} elsif ($view =~ /pretp$/) {
+    $view = "pretp";
+} elsif ($view =~ /mbist$/) {
+    $view = "mbist";
+} elsif ($view =~ /flat\.pnr$/) {
+    $view = "noscan_pnrprecheck";
+} else {
+    $view = "layout";
+}
+
+# there's issue if the top netlist is a soft link in TOT
+# example in GA103, nv_top.flat.gv.gz -> nv_top.FE_flat.gv.gz, the flow returns feflat instead of flat
+if ($ENV{TS_VIEW} ne "") {
+    $type = $ENV{TS_VIEW};
+} else {
+    $type = $view;
+} 
+lprint "# This is $type session \n";
+## split noscan/feflat with flat, flat load full def/hfp def. 
+if ( $type eq "noscan" | $type eq "feflat") {
+
+   set_cell_size_default -macro 10 10
+   set_rc_default_estimated
+   set_xy_default -centroid
+
+   foreach my $part (@macros) {
+	if  (-e ${ipo_dir}/macros/${part}/netlists/${part}.def.gz)      {
+		load ${ipo_dir}/macros/${part}/netlists/${part}.def.gz
+	} elsif  (-e ${ipo_dir}/macros/${part}/netlists/${part}.def)         {
+		load ${ipo_dir}/macros/${part}/netlists/${part}.def
+	} elsif  (-e ${ipo_dir}/macros/${part}/netlists/${part}.FE_flat.def.gz)         {
+		load ${ipo_dir}/macros/${part}/netlists/${part}.FE_flat.def.gz
+	} elsif  (-e ${ipo_dir}/macros/${part}/netlists/${part}.FE_flat.def)         {
+		load ${ipo_dir}/macros/${part}/netlists/${part}.FE_flat.def
+
+	} else {
+		print "# no def file found for ${part}\n";
+	}
+   }
+
+   foreach my $part (@parts @chiplets) {
+
+	if  (-e ${ipo_dir}/${part}/control/${part}_fp.def) {
+		load ${ipo_dir}/${part}/control/${part}_fp.def
+
+		if (-e ${ipo_dir}/${part}/control/${part}_RETIME.tcl) {
+			load ${ipo_dir}/${part}/control/${part}_RETIME.tcl
+		}
+		if (-e ${ipo_dir}/${part}/control/${part}_nvq_region.cts_retime.tcl) {
+			load ${ipo_dir}/${part}/control/${part}_nvq_region.cts_retime.tcl
+		}
+
+		## custom timing region used by XBAR team
+		if (-e ${ipo_dir}/${part}/control/${part}_timing_region.tcl) {
+			if($type eq "noscan" && $part !~ /GAEX0/ && $part !~ /NV_gae_x0/) {
+				push_top($part); @list = ();
+				@list = get_cells_of("XTR_UNIT_WRA*");
+				push(@list, get_cells_of("DUMMY*"));
+				ungroup_inst(-flatten => @list);
+				pop_top();
+			}
+			load_regions ${ipo_dir}/${part}/control/${part}_timing_region.tcl
+		}
+
+	} else {
+		print "# No fp_def found for ${part}\n"; 
+	}
+   }
+
+} elsif ( $type eq "flat" | $type eq "noscan_pnrprecheck" ) {
+
+   set_cell_size_default -macro 10 10
+   set_rc_default_estimated
+   set_xy_default -centroid
+
+   foreach my $part (@macros) {
+	if  (-e ${ipo_dir}/macros/${part}/netlists/${part}.def.gz)      {
+		load ${ipo_dir}/macros/${part}/netlists/${part}.def.gz
+	} elsif  (-e ${ipo_dir}/macros/${part}/netlists/${part}.def)         {
+		load ${ipo_dir}/macros/${part}/netlists/${part}.def
+	} elsif  (-e ${ipo_dir}/macros/${part}/netlists/${part}.FE_flat.def.gz)         {
+		load ${ipo_dir}/macros/${part}/netlists/${part}.FE_flat.def.gz
+	} elsif  (-e ${ipo_dir}/macros/${part}/netlists/${part}.FE_flat.def)         {
+		load ${ipo_dir}/macros/${part}/netlists/${part}.FE_flat.def
+
+	} else {
+		print "# no def file found for ${part}\n";
+	}
+   }
+
+   foreach my $part (@parts @chiplets) {
+
+	if  (-e ${ipo_dir}/${part}/netlists/${part}.hfp.full.def.gz) {
+		load ${ipo_dir}/${part}/netlists/${part}.hfp.full.def.gz
+	} elsif  (-e ${ipo_dir}/${part}/control/${part}_fp.def) {
+		load ${ipo_dir}/${part}/control/${part}_fp.def
+
+		if (-e ${ipo_dir}/${part}/control/${part}_RETIME.tcl) {
+			load ${ipo_dir}/${part}/control/${part}_RETIME.tcl
+		}
+		if (-e ${ipo_dir}/${part}/control/${part}.hfp.pins.def) {
+			load -replace ${ipo_dir}/${part}/control/${part}.hfp.pins.def
+		}
+
+		## custom timing region used by XBAR team
+		if (-e ${ipo_dir}/${part}/control/${part}_timing_region.tcl) {
+			load_regions ${ipo_dir}/${part}/control/${part}_timing_region.tcl
+		}
+
+	} else {
+		print "# No def found for ${part}\n"; 
+	}
+   }
+}
